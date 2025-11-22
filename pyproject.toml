@@ -1,0 +1,7 @@
+[project]
+name = "kenec"
+version = "0.1.0"
+description = "The Keyword & Entity based News Event Clustering framework"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
