@@ -2,7 +2,6 @@ from typing import Literal, cast
 
 import spacy
 from spacy import Language
-from spacy.cli import download as spacy_model_download
 from typing_extensions import override
 
 from modules.ner._base import BaseClass
@@ -18,10 +17,11 @@ class SpacyEntityModel(BaseClass):
         self,
         model: Literal[
             "en_core_web_sm", "en_core_web_md", "en_core_web_lg", "en_core_web_trf"
-        ],
+        ] = "en_core_web_sm",
     ):
         """Initialize Spacy Model Class"""
-        spacy_model_download(model)
+        if not spacy.util.is_package(model):
+            spacy.cli.download(model)
         self.__pipeline = spacy.load(model)
         _ = self.__pipeline.select_pipes(enable="ner")
 
