@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Annotated, Any, Optional, Union
+from typing import Any, Optional, Union
 
-from pydantic import BaseModel
-from pydantic.types import FileUrl, HttpUrl
+from pydantic import BaseModel, Field, FileUrl, HttpUrl
+
+from type import REQUIRED, UNIQUE
 
 from ._common import BaseNode
 
@@ -10,11 +11,11 @@ from ._common import BaseNode
 class Article(BaseNode, BaseModel):
     """Structure of a Article Node in the Database"""
 
-    title: str
-    content: str
-    published_date: datetime
-    url: Optional[Annotated[HttpUrl, HttpUrl(user_info=None)]] = None
+    title: str = Field(..., metadata=REQUIRED)
+    content: str = Field(..., metadata=REQUIRED)
+    published_date: datetime = Field(..., metadata=REQUIRED)
+    url: Optional[HttpUrl] = Field(..., metadata=UNIQUE)
     authors: Optional[list[str]] = None
     tags: Optional[list[str]] = None
     metadata: Optional[dict[str, Any]] = None
-    images: Optional[Union[Annotated[HttpUrl, HttpUrl(user_info=None)], FileUrl]] = None
+    images: Optional[list[Union[HttpUrl, FileUrl]]] = None

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar, Generic
+from typing import Any, Generic, Optional, TypeVar
+
+from type.database import DatabaseVariant
 
 DatabaseConnection = TypeVar("DatabaseConnection")
 
@@ -12,6 +14,8 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
     __conn_password: str
     __conn_dbname: str
     __conn_driver: DatabaseConnection
+    __created_initial_connection: bool
+    __DATABASE_VARIANT: DatabaseVariant
 
     @abstractmethod
     def __init__(self, uri: str, username: str, password: str, database: str):
@@ -26,28 +30,33 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
         pass
 
     @abstractmethod
-    def __verify_connection(self) -> bool:
+    def _verify_connection(self) -> tuple[bool, Optional[Exception]]:
         """Verifies the connection to the database.
 
         Returns:
-            bool: True if the connection is successful, False otherwise.
+            tuple[bool, Optional[Exception]]: True if the connection is successful, False otherwise (with the exception).
         """
         pass
 
     @abstractmethod
-    def __verify_authentication(self) -> bool:
+    def _verify_authentication(self) -> tuple[bool, Optional[Exception]]:
         """Verifies the authentication to the database.
 
         Returns:
-            bool: True if the authentication is successful, False otherwise.
+            tuple[bool, Optional[Exception]]: True if the authentication is successful, False otherwise (with the exception).
         """
         pass
 
     @abstractmethod
-    def connect(self) -> bool:
+    def connect(self) -> Optional[Any]:
         """Connects to the database.
 
         Returns:
             bool: True if the connection is successful, False otherwise.
         """
+        pass
+
+    @abstractmethod
+    def migrate(self) -> dict[str, tuple[str, Any]]:
+        """Set Constraints and necessary configurations for the database"""
         pass

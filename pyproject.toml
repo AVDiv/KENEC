@@ -8,6 +8,7 @@ dependencies = [
     "flair>=0.15.1",
     "neo4j>=6.0.3",
     "pip>=25.3",
+    "python-dotenv>=1.2.1",
     "spacy>=3.8.11",
     "transformers>=4.57.1",
     "yake>=0.6.0",

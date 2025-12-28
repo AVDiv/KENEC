@@ -1,7 +1,6 @@
-from typing import Annotated, Any, Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel
-from pydantic.types import HttpUrl
+from pydantic import BaseModel, HttpUrl
 
 from ._common import BaseNode
 
@@ -11,5 +10,5 @@ class Source(BaseNode, BaseModel):
 
     name: str
     description: Optional[str] = None
-    url: Optional[Annotated[HttpUrl, HttpUrl(user_info=None)]] = None
+    url: Optional[HttpUrl] = None
     metadata: Optional[dict[str, Any]] = None
