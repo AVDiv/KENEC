@@ -14,6 +14,16 @@ class DatabaseError(Exception):
         super().__init__(message)
 
 
+# ================== Credentials Errors ==================
+class DatabaseRequiredCredentialsMissingError(DatabaseError):
+    """Required credentials are not provided"""
+
+    def __init__(self, field: set[str], database_variant: DatabaseVariant):
+        super().__init__(
+            f"Parameter `{', '.join(field)}` is required for {database_variant}"
+        )
+
+
 # ================== Connection Errors ==================
 class DatabaseConnectionError(DatabaseError):
     """Failed to connect to the database"""
