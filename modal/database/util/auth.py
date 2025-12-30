@@ -1,14 +1,24 @@
 import re
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, Union
 
-from pydantic import AnyUrl, BaseModel, SecretStr, field_validator
+from pydantic import AnyUrl, BaseModel, SecretStr, TypeAdapter, field_validator
 from pydantic.types import StringConstraints
 
 
 class DatabaseAuth(BaseModel):
-    uri: AnyUrl = AnyUrl("neo4j://localhost:7687")
+    """Database credentials manager
+
+    Args:
+        `uri` (Union[AnyUrl, str]): URI of the database instance
+        `username` (str): Username of the database account
+        `password` (Union[SecretStr, str]): Password of the database account
+        `database` (str): Name of the database
+        `realm` (Optional[str]): ...
+    """
+
+    uri: Union[AnyUrl, str] = AnyUrl("neo4j://localhost:7687")
     username: str
-    password: SecretStr
+    password: Union[SecretStr, str]
     database: str
     realm: Optional[str] = None
 
@@ -23,14 +33,13 @@ class DatabaseAuth(BaseModel):
             "neo4j+s",
             "neo4j+ssc",
         }
+        if isinstance(v, str):
+            ta = TypeAdapter(AnyUrl)
+            v = ta.validate_strings(v)
         if v.scheme not in allowed_schemes:
             raise ValueError(
                 f"Invalid Neo4j URI scheme '{v.scheme}'. "
                 f"Must be one of: {', '.join(sorted(allowed_schemes))}"
-            )
-        if v.port is None:
-            raise ValueError(
-                "Neo4j URI must include an explicit port (e.g. :7687 or :7474)"
             )
         return v
 
