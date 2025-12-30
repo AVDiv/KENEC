@@ -5,11 +5,13 @@ from time import perf_counter
 
 from dotenv import load_dotenv
 
+from _model import KENEC
 from errors.database import (
     DatabaseConnectionAlreadyExists,
     DatabaseConnectionError,
     DatabaseMigrationError,
 )
+from modal.database.util.auth import DatabaseAuth
 
 # from _model import KENEC
 # from modal.database.node import Article
@@ -65,31 +67,17 @@ def main():
     NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "")
     NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 
-    logging.debug("Initializing database...")
-    db = Neo4jAdapter(NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE_NAME)
-    connection_error = db.connect()
-    if connection_error is None:
-        logging.info("Succesfully connected to graph database!")
-    elif isinstance(connection_error, DatabaseConnectionError) or isinstance(
-        connection_error, DatabaseConnectionAlreadyExists
-    ):
-        logging.error(connection_error)
-        raise connection_error
-    else:
-        logging.error("Unhandled exception occured when connecting to the database")
-        raise connection_error
-    # Database Migration
-    migration_results = db.migrate()
-    for key, (constraint, result) in migration_results.items():
-        label, field, def_type = key.split("::")
-        if isinstance(result, DatabaseMigrationError):
-            logging.warning(
-                f"Failed initialization of '{constraint}' {def_type} for '{field}' in '{label}' {':: {}'.format(result.__str__()) if result.__str__() != 'None' else ''}"
-            )
-        else:
-            logging.debug(
-                f"Succesfully initialized '{constraint}' {def_type} for '{field}' in '{label}'"
-            )
+    print("************ Starting initialization")
+    kenec = KENEC(
+        ner_model="spacy_web_sm",
+        db_auth=DatabaseAuth(
+            uri=NEO4J_URI,
+            username=NEO4J_USERNAME,
+            password=NEO4J_PASSWORD,
+            database=NEO4J_DATABASE_NAME,
+        ),
+    )
+    print("************ Completed initialization")
 
 
 if __name__ == "__main__":

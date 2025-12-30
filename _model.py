@@ -1,7 +1,15 @@
+import logging
 from threading import Thread
 from typing import Literal, Union
 
-from errors.database import DatabaseRequiredCredentialsMissingError
+from pydantic import AnyUrl, SecretStr
+
+from errors.database import (
+    DatabaseConnectionAlreadyExists,
+    DatabaseConnectionError,
+    DatabaseMigrationError,
+    DatabaseRequiredCredentialsMissingError,
+)
 from modal.database.node import Article
 from modal.database.util.auth import DatabaseAuth
 from modules.database import Neo4jAdapter
@@ -47,23 +55,27 @@ class KENEC:
     def __init__(
         self,
         *,
-        match_threshold: float,
-        ner_model: NERModelOption,
-        kw_extractor: KeywordExtractorOption,
+        match_threshold: float = 0.87,
+        ner_model: NERModelOption = "xlm_roberta_large_finetuned",
+        kw_extractor: KeywordExtractorOption = "yake",
         database: DatabaseVariant = "neo4j",
         db_auth: DatabaseAuth,
+        prepare_db: bool = True,
     ):
         """Initialize the model with preferences
 
         Args:
             match_threshold (float): A threshold to match in which a matching news group is determined (Should be a value between 0 and 1).
         """
+        logging.info(f"Initializing KENEC model {self.__str__()}")
         self.match_threshold = self.__validate_match_threshold(match_threshold)
         self.__entity_extractor = self.__fetch_ner_model_from_option(ner_model)
         self.__keyword_extractor = self.__fetch_kw_extractor_from_option(kw_extractor)
         self.__database = self.__fetch_database_from_option(
-            option=database, kwargs=db_auth.__dict__
+            option=database, **db_auth.__dict__
         )
+        if prepare_db:
+            self.prepare_database()
 
     def __validate_match_threshold(self, v: float):
         """The validator to determine if the given match threshold is a valid value
@@ -145,10 +157,25 @@ class KENEC:
         """
         if option == "neo4j":
             required_params: set[str] = {"uri", "username", "password", "database"}
-
-            if required_params not in kwargs.keys():
-                missing = required_params - set(kwargs.keys())
-                raise DatabaseRequiredCredentialsMissingError(missing, "neo4j")
+            key_set = set(kwargs.keys())
+            if key_set <= required_params:
+                missing = required_params - key_set
+                error = DatabaseRequiredCredentialsMissingError(missing, "neo4j")
+                logging.error(
+                    f"Missing required database credentials:: {error.__str__()}"
+                )
+                raise error
+            # Type conversions
+            kwargs["uri"] = (
+                kwargs["uri"].unicode_string()
+                if isinstance(kwargs["uri"], AnyUrl)
+                else kwargs["uri"]
+            )
+            kwargs["password"] = (
+                kwargs["password"].get_secret_value()
+                if isinstance(kwargs["password"], SecretStr)
+                else kwargs["password"]
+            )
             return Neo4jAdapter(
                 uri=kwargs["uri"],
                 username=kwargs["username"],
@@ -156,7 +183,43 @@ class KENEC:
                 database=kwargs["database"],
             )
         else:
+            logging.error(f"Invalid database option: {option}")
             raise ValueError(f"Invalid option selection '{option}'")
+
+    def prepare_database(self):
+        """Prepare/Setup the database for usage
+
+        Raises:
+            DatabaseConnectionAlreadyExists: The database connection has been already initialized and is still alive.
+            DatabaseConnectionError: The database adapter failed to connect to the database. Probably caused by authentication (provided invalid credentials) or network issues.
+            DatabaseMigrationError: Failed to migrate the configurations to the connected database.
+        """
+        logging.debug("Preparing the database...")
+        # Connect to the database
+        connection_error = self.__database.connect()
+
+        if connection_error is None:
+            logging.info("Succesfully connected to graph database!")
+        elif isinstance(connection_error, DatabaseConnectionError) or isinstance(
+            connection_error, DatabaseConnectionAlreadyExists
+        ):
+            logging.error(connection_error)
+            raise connection_error
+        else:
+            logging.error("Unhandled exception occured when connecting to the database")
+            raise connection_error
+        # Migrate configurations to the database
+        migration_results = self.__database.migrate()
+        for key, (constraint, result) in migration_results.items():
+            label, field, def_type = key.split("::")
+            if isinstance(result, DatabaseMigrationError):
+                logging.warning(
+                    f"Failed initialization of '{constraint}' {def_type} for '{field}' in '{label}' {':: {}'.format(result.__str__()) if result.__str__() != 'None' else ''}"
+                )
+            else:
+                logging.debug(
+                    f"Succesfully initialized '{constraint}' {def_type} for '{field}' in '{label}'"
+                )
 
     def add_article(self, news_article: Article):
         """Add a new article to be clustered
