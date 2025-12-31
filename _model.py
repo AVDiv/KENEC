@@ -51,6 +51,7 @@ class KENEC:
     __keyword_extractor: KeywordExtractorClass
     __database: DatabaseClass
     match_threshold: float
+    __unit_intializers: list[Thread]
 
     def __init__(
         self,
@@ -69,13 +70,35 @@ class KENEC:
         """
         logging.info(f"Initializing KENEC model {self.__str__()}")
         self.match_threshold = self.__validate_match_threshold(match_threshold)
-        self.__entity_extractor = self.__fetch_ner_model_from_option(ner_model)
-        self.__keyword_extractor = self.__fetch_kw_extractor_from_option(kw_extractor)
-        self.__database = self.__fetch_database_from_option(
-            option=database, **db_auth.__dict__
-        )
+        unit_init_functions = [
+            (
+                self.__initialize_database_from_option,
+                [database],
+                (db_auth.__dict__),
+                "database",
+            ),
+            (
+                self.__initialize_kw_extractor_from_option,
+                [kw_extractor],
+                None,
+                "kw_extractor",
+            ),
+            (self.__initialize_ner_model_from_option, [ner_model], None, "ner"),
+        ]
+        __unit_intializers = []
+        for func, args, kwargs, name_suffix in unit_init_functions:
+            print()
+            unit_thread = Thread(
+                target=func, args=args, kwargs=kwargs, name=f"kenec_{name_suffix}_unit"
+            )
+            unit_thread.start()
+            __unit_intializers.append(unit_thread)
+        db_unit_thread = __unit_intializers.pop(0)
+        db_unit_thread.join()
         if prepare_db:
             self.prepare_database()
+        for unit_thread in __unit_intializers:
+            unit_thread.join()
 
     def __validate_match_threshold(self, v: float):
         """The validator to determine if the given match threshold is a valid value
@@ -99,61 +122,56 @@ class KENEC:
             raise ValueError("Match threshold should be a value between 0 and 1")
         return v
 
-    def __fetch_ner_model_from_option(self, option: NERModelOption) -> NERModelClass:
-        """Fetch the NER Model class for the selected option
+    def __initialize_ner_model_from_option(self, option: NERModelOption):
+        """Initializes the NER Model class for the selected option
 
         Args:
             option (NERModelOption): NER Option
-
-        Return:
-            NERModelClass: The Model instance
         """
         if option == "xlm_roberta_large_finetuned":
-            return XlmRobertaLargeFinetunedConll03EnglishEntityModel()
+            self.__entity_extractor = (
+                XlmRobertaLargeFinetunedConll03EnglishEntityModel()
+            )
         elif option == "spacy_web_sm":
-            return SpacyEntityModel(model="en_core_web_sm")
+            self.__entity_extractor = SpacyEntityModel(model="en_core_web_sm")
         elif option == "spacy_web_md":
-            return SpacyEntityModel(model="en_core_web_md")
+            self.__entity_extractor = SpacyEntityModel(model="en_core_web_md")
         elif option == "spacy_web_lg":
-            return SpacyEntityModel(model="en_core_web_lg")
+            self.__entity_extractor = SpacyEntityModel(model="en_core_web_lg")
         elif option == "spacy_web_trf":
-            return SpacyEntityModel(model="en_core_web_trf")
+            self.__entity_extractor = SpacyEntityModel(model="en_core_web_trf")
         elif option == "flair_english_ontonotes":
-            return FlairEntityModel(model="ner-english-ontonotes")
+            self.__entity_extractor = FlairEntityModel(model="ner-english-ontonotes")
         elif option == "flair_english_ontonotes_large":
-            return FlairEntityModel(model="ner-english-ontonotes-large")
+            self.__entity_extractor = FlairEntityModel(
+                model="ner-english-ontonotes-large"
+            )
         else:
             raise ValueError(f"Invalid option selection '{option}'")
 
-    def __fetch_kw_extractor_from_option(
+    def __initialize_kw_extractor_from_option(
         self,
         option: KeywordExtractorOption,
-    ) -> KeywordExtractorClass:
-        """Fetch the Keyword Extractor class for the selected option
+    ):
+        """Initializes the Keyword Extractor class for the selected option
 
         Args:
             option (KeywordExtractorOption): Keyword Extractor Option
-
-        Return:
-            KeywordExtractorClass: The Model instance
         """
         if option == "yake":
-            return YakeKeywordExtractor()
+            self.__keyword_extractor = YakeKeywordExtractor()
         else:
             raise ValueError(f"Invalid option selection '{option}'")
 
-    def __fetch_database_from_option(
+    def __initialize_database_from_option(
         self,
         option: DatabaseVariant,
         **kwargs,
-    ) -> DatabaseClass:
-        """Fetch the Database class for the selected option
+    ):
+        """Initializes the Database class for the selected option
 
         Args:
             option (DatabaseOption): Database Option
-
-        Return:
-            DatabaseClass: The Database instance
         """
         if option == "neo4j":
             required_params: set[str] = {"uri", "username", "password", "database"}
@@ -176,7 +194,7 @@ class KENEC:
                 if isinstance(kwargs["password"], SecretStr)
                 else kwargs["password"]
             )
-            return Neo4jAdapter(
+            self.__database = Neo4jAdapter(
                 uri=kwargs["uri"],
                 username=kwargs["username"],
                 password=kwargs["password"],
