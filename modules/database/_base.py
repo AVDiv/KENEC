@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Coroutine, Generic, Optional, TypeVar
 
 from type.database import DatabaseVariant
 
@@ -30,7 +30,7 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
         pass
 
     @abstractmethod
-    def _verify_connection(self) -> tuple[bool, Optional[Exception]]:
+    async def _verify_connection(self) -> tuple[bool, Optional[Exception]]:
         """Verifies the connection to the database.
 
         Returns:
@@ -39,7 +39,7 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
         pass
 
     @abstractmethod
-    def _verify_authentication(self) -> tuple[bool, Optional[Exception]]:
+    async def _verify_authentication(self) -> tuple[bool, Optional[Exception]]:
         """Verifies the authentication to the database.
 
         Returns:
@@ -48,7 +48,7 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
         pass
 
     @abstractmethod
-    def connect(self) -> Optional[Any]:
+    async def connect(self) -> Optional[Any]:
         """Connects to the database.
 
         Returns:
@@ -57,6 +57,6 @@ class BaseAdapter(ABC, Generic[DatabaseConnection]):
         pass
 
     @abstractmethod
-    def migrate(self) -> dict[str, tuple[str, Any]]:
+    async def migrate(self) -> dict[str, tuple[str, Any]]:
         """Set Constraints and necessary configurations for the database"""
         pass

@@ -6,11 +6,12 @@
 #     KeywordGroup,
 #     Source,
 # )
+import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import Any, List, Optional, Union, get_args, get_origin, override
 
-from neo4j import Driver, EagerResult, GraphDatabase, Query
+from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncResult, Driver
 from pydantic import HttpUrl
 
 from errors.database import (
@@ -39,7 +40,7 @@ class Neo4jAdapter(BaseAdapter[Driver]):
     __conn_username: str
     __conn_password: str
     __conn_dbname: str
-    __conn_driver: Driver
+    __conn_driver: AsyncDriver
     __created_initial_connection: bool
     __DATABASE_VARIANT: DatabaseVariant = "neo4j"
 
@@ -52,29 +53,31 @@ class Neo4jAdapter(BaseAdapter[Driver]):
         self.__created_initial_connection = False
 
     @override
-    def _verify_connection(self) -> tuple[bool, Optional[Exception]]:
+    async def _verify_connection(self) -> tuple[bool, Optional[Exception]]:
         try:
-            self.__conn_driver.verify_connectivity()
+            await self.__conn_driver.verify_connectivity()
             return (True, None)
         except Exception as e:
             return (False, e)
 
     @override
-    def _verify_authentication(self) -> tuple[bool, Optional[Exception]]:
+    async def _verify_authentication(self) -> tuple[bool, Optional[Exception]]:
         try:
-            self.__conn_driver.verify_authentication()
+            await self.__conn_driver.verify_authentication()
             return (True, None)
         except Exception as e:
             return (False, e)
 
     @override
-    def connect(
+    async def connect(
         self,
     ) -> Optional[Union[DatabaseConnectionError, DatabaseConnectionAlreadyExists]]:
         # Check if connection was already made and still alive
         if self.__created_initial_connection:
-            is_connected, connection_error = self._verify_connection()
-            is_authenticated, authentication_error = self._verify_authentication()
+            connection_coroutine = self._verify_connection()
+            authentication_coroutine = self._verify_authentication()
+            is_connected, connection_error = await connection_coroutine
+            is_authenticated, authentication_error = await authentication_coroutine
             if is_connected and is_authenticated:
                 return DatabaseConnectionAlreadyExists()
             try:
@@ -84,7 +87,7 @@ class Neo4jAdapter(BaseAdapter[Driver]):
 
         # Create new connection
         try:
-            self.__conn_driver = GraphDatabase.driver(
+            self.__conn_driver = AsyncGraphDatabase.driver(
                 uri=self.__conn_uri,
                 auth=(self.__conn_username, self.__conn_password),
                 database=self.__conn_dbname,
@@ -94,8 +97,10 @@ class Neo4jAdapter(BaseAdapter[Driver]):
 
         self.__created_initial_connection = True
         # Check if the connection was successful
-        is_connected, connection_error = self._verify_connection()
-        is_authenticated, authentication_error = self._verify_authentication()
+        connection_coroutine = self._verify_connection()
+        authentication_coroutine = self._verify_authentication()
+        is_connected, connection_error = await connection_coroutine
+        is_authenticated, authentication_error = await authentication_coroutine
         if is_connected and is_authenticated:
             return None
         if not is_connected:
@@ -119,9 +124,9 @@ class Neo4jAdapter(BaseAdapter[Driver]):
             pass
 
     @override
-    def migrate(
+    async def migrate(
         self,
-    ) -> dict[str, tuple[str, Union[EagerResult, DatabaseMigrationError]]]:
+    ) -> dict[str, tuple[str, Union[AsyncResult, DatabaseMigrationError]]]:
         """Set Constraints/indexes and necessary configurations for the database"""
 
         def _pydantic_to_cypher_type(annotation: Any) -> str | None:
@@ -176,14 +181,13 @@ class Neo4jAdapter(BaseAdapter[Driver]):
 
             return None  # Skip unsupported types (e.g. dict, Any, complex unions)
 
-        def result_derivition(
+        async def result_derivition(
             const_idx_name: str,
-            query_response: Optional[EagerResult],
-        ) -> tuple[str, Union[EagerResult, DatabaseMigrationError]]:
-            if isinstance(query_response, EagerResult):
-                if query_response.summary.gql_status_objects[0].gql_status.startswith(
-                    "00"
-                ):
+            query_response: Optional[AsyncResult],
+        ) -> tuple[str, Union[AsyncResult, DatabaseMigrationError]]:
+            if isinstance(query_response, AsyncResult):
+                summary = await query_response.consume()
+                if summary.gql_status_objects[0].gql_status.startswith("00"):
                     res = (
                         const_idx_name,
                         query_response,
@@ -192,23 +196,22 @@ class Neo4jAdapter(BaseAdapter[Driver]):
                     res = (
                         const_idx_name,
                         DatabaseMigrationError(
-                            query_response.summary.gql_status_objects[
-                                0
-                            ].status_description
+                            summary.gql_status_objects[0].status_description
                         ),
                     )
-            else:
-                res = (
-                    const_idx_name,
-                    DatabaseMigrationError(),
-                )
+                return res
+            res = (
+                const_idx_name,
+                DatabaseMigrationError(),
+            )
             return res
 
-        query_results = {}
+        # Collect all individual migration queries first
+        migration_queries = []  # List of (key, const_idx_name, cypher_query)
+
         for node_cls in BaseNode.all_node_classes():
             label = node_cls.__name__
             for name, field in node_cls.model_fields.items():
-                # Parameter Definition
                 parameters = {
                     "typeConstName": f"type_{label}_{name}".replace(
                         "\\u0060", "`"
@@ -219,102 +222,108 @@ class Neo4jAdapter(BaseAdapter[Driver]):
                     "label": label.replace("\\u0060", "`").replace("`", "``"),
                     "property": name.replace("\\u0060", "`").replace("`", "``"),
                 }
-                # Type (Constraint) Migration
-                ## Skip if no type annotations to be migrated
+
+                # Type constraint
                 if field.annotation is not None:
                     cypher_type = _pydantic_to_cypher_type(field.annotation)
                     if cypher_type is not None:
                         cypher_type = cypher_type.replace("\\u0060", "`").replace(
                             "`", "``"
                         )
-                        type_query_result = self.__conn_driver.execute_query(
-                            query_=f"""
-                            CREATE CONSTRAINT `{parameters["typeConstName"]}`
-                            IF NOT EXISTS
-                            FOR (n:`{parameters["label"]}`) REQUIRE n.`{parameters["property"]}` IS :: {cypher_type}
-                            """,
-                        )  # ty:ignore[no-matching-overload]
+                        query = f"""
+                        CREATE CONSTRAINT `{parameters["typeConstName"]}`
+                        IF NOT EXISTS
+                        FOR (n:`{parameters["label"]}`) REQUIRE n.`{parameters["property"]}` IS :: {cypher_type}
+                        """
+                        key = f"{label}::{name}::type"
+                        migration_queries.append((key, "TYPE_CONSTRAINT", query))
 
-                        query_results[f"{label}::{name}::type"] = result_derivition(
-                            cypher_type, type_query_result
-                        )
+                # Regular constraints/indexes
+                if isinstance(field.json_schema_extra, dict):
+                    const_idx = field.json_schema_extra.get("metadata", {})
+                    if not isinstance(const_idx, dict):
+                        continue
 
-                # Constraint Migration
-                query_result = None
-                ## Skip if no constraints/indexes to be migrated
-                if not isinstance(field.json_schema_extra, dict):
-                    continue
-                const_idx = field.json_schema_extra.get("metadata")
-                if not isinstance(const_idx, dict):
-                    continue
-                ## Definition
-                if PRIMARY_KEY.items() <= const_idx.items():
-                    const_idx_name = "PRIMARY_KEY"
-                    def_type = "constraint"
-                    query_result = self.__conn_driver.execute_query(
-                        query_=f"""
+                    query = None
+                    const_name = None
+                    def_type = None
+
+                    if PRIMARY_KEY.items() <= const_idx.items():
+                        const_name = "PRIMARY_KEY"
+                        def_type = "constraint"
+                        query = f"""
                         CREATE CONSTRAINT `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`) REQUIRE n.`{parameters["property"]}` IS NODE KEY
                         """
-                    )  # ty:ignore[no-matching-overload]
-                elif UNIQUE_INDEXED.items() <= const_idx.items():
-                    const_idx_name = "UNIQUE_INDEXED"
-                    def_type = "constraint"
-                    query_result = self.__conn_driver.execute_query(
-                        query_=f"""
+
+                    elif UNIQUE_INDEXED.items() <= const_idx.items():
+                        const_name = "UNIQUE_INDEXED"
+                        def_type = "constraint"
+                        query = f"""
                         CREATE CONSTRAINT `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`) REQUIRE n.`{parameters["property"]}` IS UNIQUE
                         """
-                    )  # ty:ignore[no-matching-overload]
-                elif UNIQUE_REQUIRED.items() <= const_idx.items():
-                    const_idx_name = "UNIQUE_REQUIRED"
-                    def_type = "constraint"
-                    query_result = self.__conn_driver.execute_query(
-                        query_=f"""
+
+                    elif UNIQUE_REQUIRED.items() <= const_idx.items():
+                        const_name = "UNIQUE_REQUIRED"
+                        def_type = "constraint"
+                        query = f"""
                         CREATE CONSTRAINT `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`)
                         REQUIRE (n.`{parameters["property"]}` IS NOT NULL AND n.`{parameters["property"]}` IS UNIQUE)
-                        """,
-                    )  # ty:ignore[no-matching-overload]
+                        """
 
-                elif INDEXED.items() <= const_idx.items():
-                    const_idx_name = "INDEXED"
-                    def_type = "index"
-                    query_result = self.__conn_driver.execute_query(  # Note: added assignment for consistency
-                        query_=f"""
+                    elif INDEXED.items() <= const_idx.items():
+                        const_name = "INDEXED"
+                        def_type = "index"
+                        query = f"""
                         CREATE RANGE INDEX `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`) ON (n.`{parameters["property"]}`)
-                        """,
-                    )  # ty:ignore[no-matching-overload]
+                        """
 
-                elif UNIQUE.items() <= const_idx.items():
-                    const_idx_name = "UNIQUE"
-                    def_type = "constraint"
-                    query_result = self.__conn_driver.execute_query(
-                        query_=f"""
+                    elif UNIQUE.items() <= const_idx.items():
+                        const_name = "UNIQUE"
+                        def_type = "constraint"
+                        query = f"""
                         CREATE CONSTRAINT `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`)
                         REQUIRE n.`{parameters["property"]}` IS UNIQUE
-                        """,
-                    )  # ty:ignore[no-matching-overload]
+                        """
 
-                elif REQUIRED.items() <= const_idx.items():
-                    const_idx_name = "REQUIRED"
-                    def_type = "constraint"
-                    query_result = self.__conn_driver.execute_query(
-                        query_=f"""
+                    elif REQUIRED.items() <= const_idx.items():
+                        const_name = "REQUIRED"
+                        def_type = "constraint"
+                        query = f"""
                         CREATE CONSTRAINT `{parameters["constIdxName"]}`
                         IF NOT EXISTS
                         FOR (n:`{parameters["label"]}`)
                         REQUIRE n.`{parameters["property"]}` IS NOT NULL
-                        """,
-                    )  # ty:ignore[no-matching-overload]
-                query_results[f"{label}::{name}::{def_type}"] = result_derivition(
-                    const_idx_name, query_result
-                )
+                        """
+
+                    if query:
+                        key = f"{label}::{name}::{def_type}"
+                        migration_queries.append((key, const_name, query.strip()))
+
+        async def run_single_query(query_info):
+            key, const_idx_name, cypher = query_info
+            async with self.__conn_driver.session(
+                database=self.__conn_dbname
+            ) as session:
+                result = await session.run(cypher)
+                return (key, await result_derivition(const_idx_name, result))
+
+        # Run all in parallel
+        tasks = [run_single_query(q) for q in migration_queries]
+        results = await asyncio.gather(*tasks)
+
+        # Reconstruct the dict
+        query_results = {}
+        for key, result_tuple in results:
+            query_results[key] = result_tuple
+
         return query_results

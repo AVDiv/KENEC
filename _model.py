@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from threading import Thread
 from typing import Literal, Union
@@ -87,7 +88,6 @@ class KENEC:
         ]
         __unit_intializers = []
         for func, args, kwargs, name_suffix in unit_init_functions:
-            print()
             unit_thread = Thread(
                 target=func, args=args, kwargs=kwargs, name=f"kenec_{name_suffix}_unit"
             )
@@ -96,7 +96,7 @@ class KENEC:
         db_unit_thread = __unit_intializers.pop(0)
         db_unit_thread.join()
         if prepare_db:
-            self.prepare_database()
+            asyncio.run(self.prepare_database())
         for unit_thread in __unit_intializers:
             unit_thread.join()
 
@@ -204,7 +204,7 @@ class KENEC:
             logging.error(f"Invalid database option: {option}")
             raise ValueError(f"Invalid option selection '{option}'")
 
-    def prepare_database(self):
+    async def prepare_database(self):
         """Prepare/Setup the database for usage
 
         Raises:
@@ -214,7 +214,7 @@ class KENEC:
         """
         logging.debug("Preparing the database...")
         # Connect to the database
-        connection_error = self.__database.connect()
+        connection_error = await self.__database.connect()
 
         if connection_error is None:
             logging.info("Succesfully connected to graph database!")
@@ -227,7 +227,7 @@ class KENEC:
             logging.error("Unhandled exception occured when connecting to the database")
             raise connection_error
         # Migrate configurations to the database
-        migration_results = self.__database.migrate()
+        migration_results = await self.__database.migrate()
         for key, (constraint, result) in migration_results.items():
             label, field, def_type = key.split("::")
             if isinstance(result, DatabaseMigrationError):
