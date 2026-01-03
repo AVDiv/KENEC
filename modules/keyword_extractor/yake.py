@@ -16,7 +16,7 @@ class YakeKeywordExtractor(BaseClass):
         self.__extractor = KeywordExtractor()
 
     @override
-    def get_keywords_from_text(self, text: str) -> list[Keyword]:
+    async def get_keywords_from_text(self, text: str) -> list[Keyword]:
         """Extract Keywords from raw text
 
         Args:

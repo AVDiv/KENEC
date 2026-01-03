@@ -9,10 +9,10 @@ class BaseClass(ABC):
     @abstractmethod
     def __init__(self):
         """Initialize Model Class"""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    def get_keywords_from_text(self, text: str) -> list[Keyword]:
+    async def get_keywords_from_text(self, text: str) -> list[Keyword]:
         """Extract Keywords from raw text
 
         Args:
@@ -21,4 +21,4 @@ class BaseClass(ABC):
         Returns:
             list[Keyword]: A list of `Keyword` Objects
         """
-        pass
+        raise NotImplementedError

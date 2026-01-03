@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from threading import Thread
-from typing import Literal, Union
+from types import CoroutineType
+from typing import Any, Literal, Optional, Union
 
 from pydantic import AnyUrl, SecretStr
 
@@ -11,6 +12,7 @@ from errors.database import (
     DatabaseMigrationError,
     DatabaseRequiredCredentialsMissingError,
 )
+from errors.kenec import CannotClusterArticleError
 from modal.database.node import Article
 from modal.database.util.auth import DatabaseAuth
 from modules.database import Neo4jAdapter
@@ -20,6 +22,7 @@ from modules.ner import (
     SpacyEntityModel,
     XlmRobertaLargeFinetunedConll03EnglishEntityModel,
 )
+from type.article import Entity, Keyword
 from type.database import DatabaseVariant
 
 NERModelClass = Union[
@@ -239,32 +242,49 @@ class KENEC:
                     f"Succesfully initialized '{constraint}' {def_type} for '{field}' in '{label}'"
                 )
 
-    def add_article(self, news_article: Article):
+    async def add_article(
+        self, news_article: Article
+    ) -> tuple[list[Keyword], list[Entity]]:
         """Add a new article to be clustered
 
         Args:
             news_article (NewsArticle): The new News Article's data
 
         Returns:
-            ????
+            tuple[list[Keyword], list[Entity]]: Extracted keywords and entities from the article.
         """
         merged_article_content: str = news_article.title + "\n" + news_article.content
 
         # Extract keywords and entities
-        keyword_extractor_thread: Thread = Thread(
-            target=self.__keyword_extractor.get_keywords_from_text,
-            kwargs={"text": merged_article_content},
-            name="keyword_extraction_task",
+        kw_coro: CoroutineType[Any, Any, list[Keyword]] = (
+            self.__keyword_extractor.get_keywords_from_text(text=merged_article_content)
         )
-        keyword_extractor_thread.run()
-        entity_extractor_thread: Thread = Thread(
-            target=self.__entity_extractor.get_entities_from_text,
-            kwargs={"text": merged_article_content},
-            name="entity_extraction_task",
+        ent_coro: CoroutineType[Any, Any, list[Entity]] = (
+            self.__entity_extractor.get_entities_from_text(text=merged_article_content)
         )
-        entity_extractor_thread.run()
 
-        # Assign to new group if no entities or keywords
+        article_keywords, article_entities = await asyncio.gather(kw_coro, ent_coro)
+
+        logging.debug(
+            "Extracted %d keywords and %d entities for article '%s'",
+            len(article_keywords),
+            len(article_entities),
+            getattr(news_article, "title", "UNKNOWN"),
+        )
+
+        # If no entities or keywords
+        no_keywords = not article_keywords
+        no_entites = not article_entities
+        if no_entites or no_keywords:
+            logging.error(
+                "Article '%s' did not yield either of entities or keywords, Cannot group this articles. Skipping...",
+                getattr(news_article, "title", "UNKNOWN"),
+            )
+            raise CannotClusterArticleError(
+                "No Entites or Keywords found to group this article."
+            )
+
+        return article_keywords, article_entities
 
     def __find_or_create_article_group(self, article: Article) -> tuple[str, bool]:
         """Find an existing article group for an article or create a new one

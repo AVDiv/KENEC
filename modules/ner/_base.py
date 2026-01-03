@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 from type.article import Entity
 
 
@@ -8,10 +9,10 @@ class BaseClass(ABC):
     @abstractmethod
     def __init__(self):
         """Initialize Model Class"""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    def get_entities_from_text(self, text: str) -> list[Entity]:
+    async def get_entities_from_text(self, text: str) -> list[Entity]:
         """Extract Entities from raw text
 
         Args:
@@ -20,4 +21,4 @@ class BaseClass(ABC):
         Returns:
             list[Entity]: A list of `Entity` Objects
         """
-        pass
+        raise NotImplementedError

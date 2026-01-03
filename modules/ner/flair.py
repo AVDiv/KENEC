@@ -23,7 +23,7 @@ class FlairEntityModel(BaseClass):
         self.__tagger = SequenceTagger.load(f"flair/{model}")
 
     @override
-    def get_entities_from_text(self, text: str) -> list[Entity]:
+    async def get_entities_from_text(self, text: str) -> list[Entity]:
         """Extract Entities from raw text
 
         Args:

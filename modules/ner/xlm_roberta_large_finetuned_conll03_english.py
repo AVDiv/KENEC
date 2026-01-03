@@ -19,7 +19,7 @@ class XlmRobertaLargeFinetunedConll03EnglishEntityModel(BaseClass):
         )
 
     @override
-    def get_entities_from_text(self, text: str) -> list[Entity]:
+    async def get_entities_from_text(self, text: str) -> list[Entity]:
         """Extract Entities from raw text
 
         Args:
@@ -29,7 +29,7 @@ class XlmRobertaLargeFinetunedConll03EnglishEntityModel(BaseClass):
             list[Entity]: A list of `Entity` Objects
         """
         pipeline_entites = self.__pipeline(text)
-        combined_entities = self.__combine_same_entities(text, pipeline_entites)
+        combined_entities = await self.__combine_same_entities(text, pipeline_entites)
 
         result_entities: list = []
         for combined_entity_dict in combined_entities:
@@ -52,7 +52,7 @@ class XlmRobertaLargeFinetunedConll03EnglishEntityModel(BaseClass):
             )
         return result_entities
 
-    def __combine_same_entities(
+    async def __combine_same_entities(
         self, text: str, raw_entities: list[dict]
     ) -> list[dict]:
         prev_segment = None

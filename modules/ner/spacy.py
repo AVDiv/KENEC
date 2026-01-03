@@ -26,7 +26,7 @@ class SpacyEntityModel(BaseClass):
         _ = self.__pipeline.select_pipes(enable="ner")
 
     @override
-    def get_entities_from_text(self, text: str) -> list[Entity]:
+    async def get_entities_from_text(self, text: str) -> list[Entity]:
         """Extract Entities from raw text
 
         Args:
